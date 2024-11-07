@@ -1,0 +1,130 @@
+from pymongo import MongoClient
+from cryptography.fernet import Fernet
+import bcrypt
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from bson import ObjectId
+
+# Variáveis globais
+dados_user = None
+dados_recordacao = None
+key = None
+idencrypted = [] 
+x = 0 
+t = 0
+
+def connection_to_mongo():
+    global dados_user, dados_recordacao, key, t
+    try:
+        # Atualize a URI de conexão com o nome correto do cluster
+        client = MongoClient("mongodb+srv://root:123@cluster0.e0lpaec.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+        db = client['projeto_cryptografia']
+        dados_user = db['Usuarios']
+        dados_recordacao = db['Médicos']
+        
+        # Obtém a contagem de documentos na coleção de registros médicos
+        colecao_documento = dados_recordacao.count_documents({})
+        messagebox.showinfo("Sucesso!!", f"Conexão estabelecida! Documentos na coleção: {colecao_documento}")
+        
+        # Gera uma chave para criptografia
+        key = generate_key()
+        
+        # Inicia as opções para o usuário
+        user_choice()
+
+    except Exception as e:
+        messagebox.showerror("Erro", f"Não foi possível conectar ao MongoDB: {str(e)}")
+
+def user_choice():
+    global t
+    escolha = simpledialog.askstring("Escolha", "Digite 1 para acessar um registro médico, 2 para criar um registro médico ou 3 para sair:")
+    
+    if escolha == '1':
+        if len(idencrypted) == 0:
+            messagebox.showinfo ("Nenhum registro médico disponível.")
+        else:
+            options = "\n".join([f"{x} = {idencrypted[x]}" for x in range(t)])
+            n = simpledialog.askinteger("Acesso a Registro", f"Escolha um registro:\n{options}")
+            if n is not None and 0 <= n < t:
+                recordacao = acessar_recor_med(idencrypted[n])
+                if recordacao:
+                    messagebox.showinfo("Registro Médico", f"Nome do Paciente: {recordacao['nomepaciente']}\nHistórico Médico: {recordacao['historicomed']}\nTratamentos: {recordacao['tratamentos']}")
+                else:
+                    messagebox.showwarning("Aviso", "Registro não encontrado.")
+            else:
+                messagebox.showwarning("Aviso", "Opção inválida.")
+
+    elif escolha == '2':
+        id = simpledialog.askstring("ID do Registro", "Digite um ID para o registro médico:")
+        username = simpledialog.askstring("Nome de Usuário", "Digite o nome de usuário:")
+        password = simpledialog.askstring("Senha", "Digite a senha:", show='*')
+        registrar_user(id, username, password)
+
+    elif escolha == '3':
+        return
+
+def generate_key():
+    return Fernet.generate_key()
+
+def encrypt_data(data, key):
+    global idencrypted, x
+    fernet = Fernet(key)
+    encrypted_data = fernet.encrypt(data.encode())
+    idencrypted.append(encrypted_data)
+    x += 1
+    return encrypted_data
+
+def decrypt_data(encrypted_data, key):
+    fernet = Fernet(key)
+    decrypted_data = fernet.decrypt(encrypted_data).decode()
+    return decrypted_data
+
+def senha_hash(senha):
+    return bcrypt.hashpw(senha.encode(), bcrypt.gensalt())
+
+def checar_senha(hashed, senha):
+    return bcrypt.checkpw(senha.encode(), hashed)
+
+def registrar_user(id, usuario, senha):
+    hashed_senha = senha_hash(senha)
+    dados_user.insert_one({'id': id, 'usuario': usuario, 'senha': hashed_senha})
+    messagebox.showinfo("Sucesso", f"Usuário '{usuario}' registrado com sucesso!")
+
+def criar_recor_medica(nomepaciente, historicomed, tratamentos, key):
+    global t
+    recordacao = {
+        'nomepaciente': encrypt_data(nomepaciente, key),
+        'historicomed': encrypt_data(historicomed, key),
+        'tratamentos': encrypt_data(tratamentos, key)
+    }
+    dados_recordacao.insert_one(recordacao)
+    messagebox.showinfo("Sucesso", f"Registro médico criado para {nomepaciente} com sucesso!")
+    t += 1
+
+def acessar_recor_med(encrypted_id):
+    try:
+        recordacao = dados_recordacao.find_one({'_id': ObjectId(encrypted_id)})
+        if recordacao:
+            nomepaciente = decrypt_data(recordacao['nomepaciente'], key)
+            historicomed = decrypt_data(recordacao['historicomed'], key)
+            tratamentos = decrypt_data(recordacao['tratamentos'], key)
+            return {
+                'nomepaciente': nomepaciente,
+                'historicomed': historicomed,
+                'tratamentos': tratamentos
+            }
+    except Exception as e:
+        print(f"Erro ao acessar o registro médico: {e}")
+    return None
+
+# Configuração da interface gráfica
+root = tk.Tk()
+root.title("Conectar ao MongoDB Atlas")
+
+label = tk.Label(root, text="Clique no botão para conectar ao MongoDB Atlas")
+label.pack(pady=10)
+
+connect_button = tk.Button(root, text="Conectar", command=connection_to_mongo)
+connect_button.pack(pady=10)
+
+root.mainloop()
